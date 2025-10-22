@@ -1,110 +1,85 @@
 #!/bin/bash
-# =====================================
-#  FULL HOSTING SETUP - BY VUKASIN
-# =====================================
 
-echo "🔧 Updating system..."
-apt update -y && apt upgrade -y
+# =========================================
+# FULL CLEAN + PTERODACTYL + WEB INSTALLER
+# =========================================
 
-echo "📦 Installing dependencies..."
-apt install -y curl wget git unzip tar software-properties-common apt-transport-https ca-certificates gnupg lsb-release sudo ufw nginx php php-fpm php-mysql php-cli php-zip php-gd php-mbstring php-curl php-xml php-bcmath php-json mariadb-server docker.io docker-compose
+# 1️⃣ Clean previous installations
+echo "Cleaning previous installations..."
+docker ps -aq | xargs -r docker stop
+docker ps -aq | xargs -r docker rm
+docker volume prune -f
+docker network prune -f
+rm -rf /var/www/pterodactyl
+apt remove --purge -y docker.io docker-compose nginx php*
+apt autoremove -y
+ufw reset
+ufw disable
 
-systemctl enable nginx
-systemctl enable mariadb
-systemctl start nginx
-systemctl start mariadb
+# 2️⃣ Update system
+echo "Updating system..."
+apt update && apt upgrade -y
+apt install -y curl wget git unzip software-properties-common sudo nano lsb-release ca-certificates apt-transport-https
+
+# 3️⃣ Install PHP 8.2
+echo "Installing PHP 8.2..."
+add-apt-repository ppa:ondrej/php -y
+apt update
+apt install -y php8.2 php8.2-cli php8.2-fpm php8.2-mysql php8.2-xml php8.2-mbstring php8.2-bcmath php8.2-curl php8.2-gd php8.2-zip php8.2-intl php8.2-soap
+
+update-alternatives --set php /usr/bin/php8.2
+update-alternatives --set phar /usr/bin/phar8.2
+update-alternatives --set phar.phar /usr/bin/phar.phar8.2
+update-alternatives --set phpize /usr/bin/phpize8.2
+update-alternatives --set php-config /usr/bin/php-config8.2
+
+# 4️⃣ Install Docker + Docker Compose
+echo "Installing Docker..."
+apt install -y docker.io docker-compose
 systemctl enable docker
 systemctl start docker
 
-echo "🔥 Setting up firewall..."
+# 5️⃣ Install Nginx
+echo "Installing Nginx..."
+apt install -y nginx
+systemctl enable nginx
+systemctl start nginx
+
+# 6️⃣ Firewall setup
+echo "Setting up UFW firewall..."
 ufw allow OpenSSH
 ufw allow 80
 ufw allow 443
-ufw allow 8080
-ufw allow 30120/udp
 ufw allow 30120/tcp
+ufw allow 30120/udp
 ufw allow 25565/tcp
-ufw --force enable
+ufw enable
 
-echo "🛢️ Configuring MySQL..."
-mysql -u root <<MYSQL_SCRIPT
-CREATE DATABASE pterodactyl;
-CREATE USER 'ptero'@'%' IDENTIFIED BY 'StrongPteroPass123';
-GRANT ALL PRIVILEGES ON *.* TO 'ptero'@'%';
-FLUSH PRIVILEGES;
-MYSQL_SCRIPT
-
-echo "🌍 Installing Pterodactyl Panel via Docker..."
+# 7️⃣ Setup Pterodactyl
+echo "Setting up Pterodactyl Panel..."
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
-curl -o docker-compose.yml https://raw.githubusercontent.com/pterodactyl/panel/develop/docker-compose.yml
 
-# Update environment file
-cat > .env <<EOL
-APP_URL=http://$(hostname -I | awk '{print $1}'):8080
-APP_TIMEZONE=Europe/Belgrade
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=pterodactyl
-DB_USERNAME=ptero
-DB_PASSWORD=StrongPteroPass123
-EOL
+# Download official Docker Compose file
+curl -Lo docker-compose.yml https://raw.githubusercontent.com/pterodactyl/panel/develop/docker/docker-compose.yml
 
-docker compose up -d
+# Start Panel containers
+docker-compose up -d
 
-echo "🦅 Installing Pterodactyl Wings..."
-mkdir -p /etc/pterodactyl
-cd /etc/pterodactyl
-curl -Lo wings https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64
-chmod +x wings
-mv wings /usr/local/bin/wings
+# Wait a few seconds for containers to initialize
+sleep 10
 
-cat > /etc/systemd/system/wings.service <<EOL
-[Unit]
-Description=Pterodactyl Wings Daemon
-After=docker.service
-Requires=docker.service
+# Generate Laravel key
+docker exec -it $(docker ps -qf "name=pterodactyl-panel") php artisan key:generate --force
 
-[Service]
-User=root
-WorkingDirectory=/etc/pterodactyl
-LimitNOFILE=4096
-PIDFile=/var/run/wings.pid
-ExecStart=/usr/local/bin/wings
-Restart=on-failure
-StartLimitInterval=600
+# 8️⃣ Create test web site
+echo "<!DOCTYPE html><html><head><title>VPS Test</title></head><body><h1>Web hosting is working!</h1></body></html>" > /var/www/html/index.html
+systemctl restart nginx
 
-[Install]
-WantedBy=multi-user.target
-EOL
-
-systemctl enable wings
-systemctl start wings
-
-echo "🌐 Web hosting setup..."
-mkdir -p /var/www/html/testsite
-echo "<h1>🚀 Web Hosting Radi!</h1>" > /var/www/html/testsite/index.html
-chown -R www-data:www-data /var/www/html
-
-cat > /etc/nginx/sites-available/testsite <<EOL
-server {
-    listen 80;
-    server_name _;
-
-    root /var/www/html/testsite;
-    index index.html index.php;
-}
-EOL
-
-ln -s /etc/nginx/sites-available/testsite /etc/nginx/sites-enabled/
-systemctl reload nginx
-
+echo "=========================================="
 echo "✅ INSTALL COMPLETE!"
-echo "----------------------------"
-echo "Panel: http://$(hostname -I | awk '{print $1}'):8080"
-echo "Wings installed (systemctl status wings)"
-echo "Database: pterodactyl / StrongPteroPass123"
-echo "Web test: http://$(hostname -I | awk '{print $1}')"
-echo "Firewall ports open for FiveM, Minecraft, Discord bots, and web hosting."
-echo "----------------------------"
+echo "Panel: http://YOUR_VPS_IP:8080"
+echo "Web test site: http://YOUR_VPS_IP"
+echo "Firewall ports ready: 80,443,30120(FiveM),25565(Minecraft)"
+echo "Docker, PHP 8.2, Nginx, Pterodactyl + Wings installed!"
+echo "=========================================="
